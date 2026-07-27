@@ -588,12 +588,8 @@ function renderResumen(){
   if(banner2) banner2.onclick = () => { currentFilter = 'resolucion'; renderResumen(); };
 
   document.querySelectorAll('[data-bomberos-equipo]').forEach(sel=>{
-    sel.addEventListener('change', async ()=>{
-      const e = equipos.find(x => x.id === sel.dataset.bomberosEquipo);
-      if(!e) return;
-      e[sel.dataset.bomberosField] = sel.value;
-      await saveEquipos();
-      renderResumen();
+    sel.addEventListener('change', ()=>{
+      handleBomberosSelectChange(sel, sel.dataset.bomberosEquipo, sel.dataset.bomberosField, renderResumen);
     });
   });
 }
@@ -614,7 +610,13 @@ function renderEquipos(){
         <div class="placard ${an.cls}">
           <div class="ptitle">Permiso anual</div>
           <div class="prow"><input type="text" data-f="an_numero" value="${escapeHtml(e.an_numero)}" placeholder="N° permiso"></div>
-          <div class="prow"><input type="date" data-f="an_venc" value="${e.an_venc||''}"><span class="badge ${an.cls}">${an.label}</span></div>
+          <div class="prow"><input type="date" data-f="an_venc" value="${e.an_venc||''}" ${!e.an_venc?'disabled':''}><span class="badge ${an.cls}">${an.label}</span></div>
+          <div class="prow" style="margin-top:4px;">
+            <label style="display:flex;align-items:center;gap:5px;font-size:10.5px;color:var(--muted);cursor:pointer;">
+              <input type="checkbox" data-tramite-toggle="an_venc" ${!e.an_venc?'checked':''} style="width:13px;height:13px;accent-color:var(--hazard);">
+              En trámite (sin fecha aún)
+            </label>
+          </div>
           <div class="prow" style="margin-top:6px;">
             <select data-f="an_bomberos" style="width:100%;background:var(--steel-700);border:1px solid var(--steel-600);border-radius:5px;color:var(--paper-100);font-family:'Inter',sans-serif;font-size:11px;font-weight:600;padding:5px 6px;">
               ${BOMBEROS_ESTADOS.map(o=>`<option value="${o}" ${(e.an_bomberos||'PENDIENTE')===o?'selected':''}>Bomberos: ${o==='PENDIENTE'?'Pendiente':o==='ENVIADO'?'Enviado':'Resuelto'}</option>`).join('')}
@@ -624,7 +626,13 @@ function renderEquipos(){
         <div class="placard ${bi.cls}">
           <div class="ptitle">Permiso bimestral</div>
           <div class="prow"><input type="text" data-f="bi_numero" value="${escapeHtml(e.bi_numero)}" placeholder="N° permiso"></div>
-          <div class="prow"><input type="date" data-f="bi_venc" value="${e.bi_venc||''}"><span class="badge ${bi.cls}">${bi.label}</span></div>
+          <div class="prow"><input type="date" data-f="bi_venc" value="${e.bi_venc||''}" ${!e.bi_venc?'disabled':''}><span class="badge ${bi.cls}">${bi.label}</span></div>
+          <div class="prow" style="margin-top:4px;">
+            <label style="display:flex;align-items:center;gap:5px;font-size:10.5px;color:var(--muted);cursor:pointer;">
+              <input type="checkbox" data-tramite-toggle="bi_venc" ${!e.bi_venc?'checked':''} style="width:13px;height:13px;accent-color:var(--hazard);">
+              En trámite (sin fecha aún)
+            </label>
+          </div>
           <div class="prow" style="margin-top:6px;">
             <select data-f="bi_bomberos" style="width:100%;background:var(--steel-700);border:1px solid var(--steel-600);border-radius:5px;color:var(--paper-100);font-family:'Inter',sans-serif;font-size:11px;font-weight:600;padding:5px 6px;">
               ${BOMBEROS_ESTADOS.map(o=>`<option value="${o}" ${(e.bi_bomberos||'PENDIENTE')===o?'selected':''}>Bomberos: ${o==='PENDIENTE'?'Pendiente':o==='ENVIADO'?'Enviado':'Resuelto'}</option>`).join('')}
@@ -644,10 +652,29 @@ function bindEquipoEvents(){
     const id = card.dataset.id;
     const e = equipos.find(x=>x.id===id);
     card.querySelectorAll('[data-f]').forEach(inp=>{
+      if(inp.dataset.f === 'an_bomberos' || inp.dataset.f === 'bi_bomberos') return;
       inp.addEventListener('change', ()=>{
         e[inp.dataset.f] = inp.value;
         saveEquipos();
         renderEquipos();
+      });
+    });
+    card.querySelectorAll('[data-f="an_bomberos"], [data-f="bi_bomberos"]').forEach(sel=>{
+      sel.addEventListener('change', ()=>{
+        handleBomberosSelectChange(sel, id, sel.dataset.f, renderEquipos);
+      });
+    });
+    card.querySelectorAll('[data-tramite-toggle]').forEach(chk=>{
+      chk.addEventListener('change', ()=>{
+        const vencField = chk.dataset.tramiteToggle;
+        if(chk.checked){
+          e[vencField] = '';
+          saveEquipos();
+          renderEquipos();
+        }else{
+          const dateInput = card.querySelector(`input[type="date"][data-f="${vencField}"]`);
+          if(dateInput) dateInput.disabled = false;
+        }
       });
     });
     card.querySelector('[data-del]').addEventListener('click', ()=>{
@@ -764,6 +791,57 @@ function closeModal(){
   document.getElementById('modalRoot').innerHTML = '';
 }
 
+// Shared handler for any bomberos-status <select> (Resumen's inline dropdowns and the
+// per-permit selects on each Equipos card). If the new value is RESUELTO, ask for the
+// new vencimiento date before committing — resolving implies the permit was renewed.
+// If the user cancels, the select is reverted to its previous value.
+function handleBomberosSelectChange(selectEl, equipoId, bomberosField, onDone){
+  const e = equipos.find(x => x.id === equipoId);
+  if(!e) return;
+  const previous = e[bomberosField] || 'PENDIENTE';
+  const newValue = selectEl.value;
+
+  if(newValue !== 'RESUELTO'){
+    e[bomberosField] = newValue;
+    saveEquipos().then(onDone);
+    return;
+  }
+
+  const esAnual = bomberosField === 'an_bomberos';
+  const vencField = esAnual ? 'an_venc' : 'bi_venc';
+  const numField = esAnual ? 'an_numero' : 'bi_numero';
+  const fechaAnterior = e[vencField] || '';
+
+  openModal(`
+    <div class="modal-head"><h2>Marcar como resuelto</h2><button class="modal-close" id="rz-cancel">✕</button></div>
+    <div class="modal-note">${escapeHtml(e.placa)} — Permiso <strong>${esAnual ? 'Anual' : 'Bimestral'}</strong>. Al resolverse, indica la nueva fecha de vencimiento del permiso renovado.${fechaAnterior ? ` Fecha actual: <strong>${fechaAnterior}</strong>.` : ''}</div>
+    <div class="mfield"><label>Permiso</label><input type="text" value="${esAnual ? 'Anual' : 'Bimestral'}" disabled></div>
+    <div class="mfield"><label>N° de permiso (opcional, si cambió)</label><input type="text" id="rz-numero" value="${escapeHtml(e[numField])}"></div>
+    <div class="mfield"><label>Nueva fecha de vencimiento</label><input type="date" id="rz-fecha"></div>
+    <div id="rz-error" style="display:none;color:var(--danger);font-size:11.5px;margin:-6px 0 10px;">Debes ingresar una fecha nueva, distinta a la actual, para marcarlo como resuelto.</div>
+    <button class="mbtn-primary" id="rz-guardar">Guardar y marcar resuelto</button>
+  `);
+
+  document.getElementById('rz-cancel').addEventListener('click', ()=>{
+    selectEl.value = previous;
+    closeModal();
+  });
+  document.getElementById('rz-guardar').addEventListener('click', async ()=>{
+    const fecha = document.getElementById('rz-fecha').value;
+    const errorEl = document.getElementById('rz-error');
+    if(!fecha || fecha === fechaAnterior){
+      errorEl.style.display = 'block';
+      return;
+    }
+    e[bomberosField] = 'RESUELTO';
+    e[vencField] = fecha;
+    e[numField] = document.getElementById('rz-numero').value;
+    await saveEquipos();
+    closeModal();
+    onDone();
+  });
+}
+
 /* ---------- Acción 1: Actualizar info equipo ---------- */
 function openActualizarEquipoModal(){
   if(equipos.length === 0){ alert('No hay equipos registrados todavía.'); return; }
@@ -779,25 +857,40 @@ function openActualizarEquipoModal(){
       </select>
     </div>
     <div class="mfield"><label>Número de permiso</label><input type="text" id="me-numero" placeholder="N° permiso"></div>
-    <div class="mfield"><label>Fecha de vencimiento</label><input type="date" id="me-fecha"></div>
+    <div class="mfield">
+      <label style="display:flex;align-items:center;gap:6px;cursor:pointer;">
+        <input type="checkbox" id="me-tramite" style="width:14px;height:14px;accent-color:var(--hazard);">
+        En trámite (todavía sin fecha de vencimiento)
+      </label>
+    </div>
+    <div class="mfield" id="me-fecha-wrap"><label>Fecha de vencimiento</label><input type="date" id="me-fecha"></div>
     <button class="mbtn-primary" id="me-guardar">Guardar cambios</button>
   `);
 
   const fillFromSelection = () => {
     const e = equipos.find(x => x.id === document.getElementById('me-equipo').value);
     const tipo = document.getElementById('me-tipo').value;
-    document.getElementById('me-numero').value = (tipo === 'an' ? e.an_numero : e.bi_numero) || '';
-    document.getElementById('me-fecha').value = (tipo === 'an' ? e.an_venc : e.bi_venc) || '';
+    const numero = (tipo === 'an' ? e.an_numero : e.bi_numero) || '';
+    const fecha = (tipo === 'an' ? e.an_venc : e.bi_venc) || '';
+    document.getElementById('me-numero').value = numero;
+    document.getElementById('me-fecha').value = fecha;
+    document.getElementById('me-tramite').checked = !fecha;
+    document.getElementById('me-fecha-wrap').style.display = fecha ? '' : 'none';
   };
   document.getElementById('me-equipo').addEventListener('change', fillFromSelection);
   document.getElementById('me-tipo').addEventListener('change', fillFromSelection);
+  document.getElementById('me-tramite').addEventListener('change', (e)=>{
+    document.getElementById('me-fecha-wrap').style.display = e.target.checked ? 'none' : '';
+    if(e.target.checked) document.getElementById('me-fecha').value = '';
+  });
   fillFromSelection();
 
   document.getElementById('me-guardar').addEventListener('click', async ()=>{
     const e = equipos.find(x => x.id === document.getElementById('me-equipo').value);
     const tipo = document.getElementById('me-tipo').value;
     const numero = document.getElementById('me-numero').value;
-    const fecha = document.getElementById('me-fecha').value;
+    const enTramite = document.getElementById('me-tramite').checked;
+    const fecha = enTramite ? '' : document.getElementById('me-fecha').value;
     if(tipo === 'an'){ e.an_numero = numero; e.an_venc = fecha; }
     else{ e.bi_numero = numero; e.bi_venc = fecha; }
     await saveEquipos();
