@@ -1,0 +1,16 @@
+{
+  "name": "EQUIPOS JB, S.A. · Control de Permisos",
+  "short_name": "Permisos JB",
+  "description": "Control de permisos anuales y bimestrales de equipos de transporte — Equipos JB, S.A.",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#10161d",
+  "theme_color": "#10161d",
+  "lang": "es",
+  "icons": [
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
+}
