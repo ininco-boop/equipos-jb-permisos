@@ -502,8 +502,8 @@ function renderResumen(){
   // One entry per permit (anual/bimestral) per equipo, for each bomberos state.
   const bomberosItems = [];
   equipos.forEach(e=>{
-    bomberosItems.push({equipoId:e.id, placa:e.placa, permiso:'anual', field:'an_bomberos', label:'Permiso anual', estado:e.an_bomberos||'PENDIENTE'});
-    bomberosItems.push({equipoId:e.id, placa:e.placa, permiso:'bimestral', field:'bi_bomberos', label:'Permiso bimestral', estado:e.bi_bomberos||'PENDIENTE'});
+    bomberosItems.push({equipoId:e.id, placa:e.placa, permiso:'anual', field:'an_bomberos', label:'Permiso anual', estado:e.an_bomberos||'PENDIENTE', por:e.an_bomberos_por});
+    bomberosItems.push({equipoId:e.id, placa:e.placa, permiso:'bimestral', field:'bi_bomberos', label:'Permiso bimestral', estado:e.bi_bomberos||'PENDIENTE', por:e.bi_bomberos_por});
   });
   const porLlevar = bomberosItems.filter(i => i.estado === 'PENDIENTE');
   const enResolucion = bomberosItems.filter(i => i.estado === 'ENVIADO');
@@ -556,7 +556,7 @@ function renderResumen(){
       html += `<div class="rline ${currentFilter==='bomberos'?'bomberos':'resolucion'}">
         <div class="rmain">
           <div class="rtitle">${escapeHtml(i.placa)}</div>
-          <div class="rsub">${escapeHtml(i.label)}</div>
+          <div class="rsub">${escapeHtml(i.label)}${i.por ? ` · Últ. cambio: <strong>${escapeHtml(i.por)}</strong>` : ''}</div>
         </div>
         <div class="rdays">
           <select data-bomberos-equipo="${i.equipoId}" data-bomberos-field="${i.field}" style="background:var(--steel-750);border:1px solid var(--steel-700);border-radius:6px;color:var(--paper-100);font-family:'Inter',sans-serif;font-size:11.5px;font-weight:600;padding:6px 8px;">
@@ -622,6 +622,7 @@ function renderEquipos(){
               ${BOMBEROS_ESTADOS.map(o=>`<option value="${o}" ${(e.an_bomberos||'PENDIENTE')===o?'selected':''}>Bomberos: ${o==='PENDIENTE'?'Pendiente':o==='ENVIADO'?'Enviado':'Resuelto'}</option>`).join('')}
             </select>
           </div>
+          ${e.an_bomberos_por ? `<div style="font-size:9.5px;color:var(--muted);margin-top:4px;">Últ. cambio: <strong>${escapeHtml(e.an_bomberos_por)}</strong></div>` : ''}
         </div>
         <div class="placard ${bi.cls}">
           <div class="ptitle">Permiso bimestral</div>
@@ -638,6 +639,7 @@ function renderEquipos(){
               ${BOMBEROS_ESTADOS.map(o=>`<option value="${o}" ${(e.bi_bomberos||'PENDIENTE')===o?'selected':''}>Bomberos: ${o==='PENDIENTE'?'Pendiente':o==='ENVIADO'?'Enviado':'Resuelto'}</option>`).join('')}
             </select>
           </div>
+          ${e.bi_bomberos_por ? `<div style="font-size:9.5px;color:var(--muted);margin-top:4px;">Últ. cambio: <strong>${escapeHtml(e.bi_bomberos_por)}</strong></div>` : ''}
         </div>
       </div>
     </div>`;
@@ -792,50 +794,70 @@ function closeModal(){
 }
 
 // Shared handler for any bomberos-status <select> (Resumen's inline dropdowns and the
-// per-permit selects on each Equipos card). If the new value is RESUELTO, ask for the
-// new vencimiento date before committing — resolving implies the permit was renewed.
-// If the user cancels, the select is reverted to its previous value.
+// per-permit selects on each Equipos card). Every change requires the person's initials
+// (for accountability). If the new value is RESUELTO, also ask for the new vencimiento
+// date — resolving implies the permit was renewed. If the user cancels, the select is
+// reverted to its previous value.
+function getLastInitials(){
+  try{ return localStorage.getItem('lastInitials') || ''; }catch(e){ return ''; }
+}
+function setLastInitials(v){
+  try{ localStorage.setItem('lastInitials', v); }catch(e){}
+}
+
 function handleBomberosSelectChange(selectEl, equipoId, bomberosField, onDone){
   const e = equipos.find(x => x.id === equipoId);
   if(!e) return;
   const previous = e[bomberosField] || 'PENDIENTE';
   const newValue = selectEl.value;
-
-  if(newValue !== 'RESUELTO'){
-    e[bomberosField] = newValue;
-    saveEquipos().then(onDone);
-    return;
-  }
-
+  const porField = bomberosField + '_por';
   const esAnual = bomberosField === 'an_bomberos';
   const vencField = esAnual ? 'an_venc' : 'bi_venc';
   const numField = esAnual ? 'an_numero' : 'bi_numero';
   const fechaAnterior = e[vencField] || '';
+  const estadoLabel = {PENDIENTE:'Pendiente', ENVIADO:'Enviado', RESUELTO:'Resuelto'}[newValue];
+
+  const extraField = newValue === 'RESUELTO' ? `
+    <div class="mfield"><label>N° de permiso (opcional, si cambió)</label><input type="text" id="bz-numero" value="${escapeHtml(e[numField])}"></div>
+    <div class="mfield"><label>Nueva fecha de vencimiento</label><input type="date" id="bz-fecha"></div>
+    <div id="bz-error" style="display:none;color:var(--danger);font-size:11.5px;margin:-6px 0 10px;">Debes ingresar una fecha nueva, distinta a la actual, para marcarlo como resuelto.</div>
+  ` : '';
 
   openModal(`
-    <div class="modal-head"><h2>Marcar como resuelto</h2><button class="modal-close" id="rz-cancel">✕</button></div>
-    <div class="modal-note">${escapeHtml(e.placa)} — Permiso <strong>${esAnual ? 'Anual' : 'Bimestral'}</strong>. Al resolverse, indica la nueva fecha de vencimiento del permiso renovado.${fechaAnterior ? ` Fecha actual: <strong>${fechaAnterior}</strong>.` : ''}</div>
-    <div class="mfield"><label>Permiso</label><input type="text" value="${esAnual ? 'Anual' : 'Bimestral'}" disabled></div>
-    <div class="mfield"><label>N° de permiso (opcional, si cambió)</label><input type="text" id="rz-numero" value="${escapeHtml(e[numField])}"></div>
-    <div class="mfield"><label>Nueva fecha de vencimiento</label><input type="date" id="rz-fecha"></div>
-    <div id="rz-error" style="display:none;color:var(--danger);font-size:11.5px;margin:-6px 0 10px;">Debes ingresar una fecha nueva, distinta a la actual, para marcarlo como resuelto.</div>
-    <button class="mbtn-primary" id="rz-guardar">Guardar y marcar resuelto</button>
+    <div class="modal-head"><h2>Cambiar estado</h2><button class="modal-close" id="bz-cancel">✕</button></div>
+    <div class="modal-note">${escapeHtml(e.placa)} — Permiso <strong>${esAnual ? 'Anual' : 'Bimestral'}</strong> → <strong>${estadoLabel}</strong>${newValue==='RESUELTO' && fechaAnterior ? `. Fecha actual: <strong>${fechaAnterior}</strong>.` : '.'}</div>
+    ${extraField}
+    <div class="mfield"><label>Tus iniciales</label><input type="text" id="bz-iniciales" maxlength="6" placeholder="Ej. IC" value="${escapeHtml(getLastInitials())}" style="text-transform:uppercase;"></div>
+    <div id="bz-error-iniciales" style="display:none;color:var(--danger);font-size:11.5px;margin:-6px 0 10px;">Escribe tus iniciales para confirmar el cambio.</div>
+    <button class="mbtn-primary" id="bz-guardar">Guardar</button>
   `);
 
-  document.getElementById('rz-cancel').addEventListener('click', ()=>{
+  document.getElementById('bz-cancel').addEventListener('click', ()=>{
     selectEl.value = previous;
     closeModal();
   });
-  document.getElementById('rz-guardar').addEventListener('click', async ()=>{
-    const fecha = document.getElementById('rz-fecha').value;
-    const errorEl = document.getElementById('rz-error');
-    if(!fecha || fecha === fechaAnterior){
-      errorEl.style.display = 'block';
+
+  document.getElementById('bz-guardar').addEventListener('click', async ()=>{
+    const iniciales = document.getElementById('bz-iniciales').value.trim().toUpperCase();
+    if(!iniciales){
+      document.getElementById('bz-error-iniciales').style.display = 'block';
       return;
     }
-    e[bomberosField] = 'RESUELTO';
-    e[vencField] = fecha;
-    e[numField] = document.getElementById('rz-numero').value;
+
+    if(newValue === 'RESUELTO'){
+      const fecha = document.getElementById('bz-fecha').value;
+      const errorEl = document.getElementById('bz-error');
+      if(!fecha || fecha === fechaAnterior){
+        errorEl.style.display = 'block';
+        return;
+      }
+      e[vencField] = fecha;
+      e[numField] = document.getElementById('bz-numero').value;
+    }
+
+    e[bomberosField] = newValue;
+    e[porField] = iniciales;
+    setLastInitials(iniciales);
     await saveEquipos();
     closeModal();
     onDone();
